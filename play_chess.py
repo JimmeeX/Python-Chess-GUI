@@ -3,7 +3,7 @@ from PIL import Image, ImageTk
 import chess
 import tkinter as tk
 import itertools
-
+#%%
 class ChessBoard(tk.Frame):
     def __init__(self, parent, game, orientation=0, size=64, colour1="#F0D9B5", colour2="#B58863"):
         super().__init__(parent)
