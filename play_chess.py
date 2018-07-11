@@ -3,7 +3,7 @@ from PIL import Image, ImageTk
 import chess
 import tkinter as tk
 import itertools
-#%%
+
 class ChessBoard(tk.Frame):
     def __init__(self, parent, game, orientation=0, size=64, colour1="#F0D9B5", colour2="#B58863"):
         super().__init__(parent)
@@ -44,26 +44,6 @@ class ChessBoard(tk.Frame):
         }
 
         self.initialise_images()
-        # Initialise Coordinate Mapping for Chess Board
-        ranks = {"a": 0, "b": 1, "c": 2, "d": 3, "e": 4, "f": 5, "g": 6, "h": 7}
-        files = {"1": 7, "2": 6, "3": 5, "4": 4, "5": 3, "6": 2, "7": 1, "8": 0}
-
-        # Coordinate Mapping
-        coord_keys = ["".join(item)[::-1] for item in list(itertools.product(files, ranks))]
-        coord_vals = list(itertools.product(files.values(), ranks.values()))
-
-        # White on bottom
-        if orientation == 0:
-            self.coords = dict(zip(coord_keys, coord_vals))
-        # Black on bottom
-        else:
-            self.coords = dict(zip(coord_keys, coord_vals[::-1]))
-
-        self.coords_rev = {v: k for k, v in self.coords.items()}
-
-        canvas_width = self.columns * size
-        canvas_height = self.rows * size
-
         # Initialise GUI
 
         # Menu
@@ -76,11 +56,15 @@ class ChessBoard(tk.Frame):
         self.file_menu.add_command(label="Quit Game", command=self.quit, accelerator="Ctrl+Q")
         self.menubar.add_cascade(label="File", menu=self.file_menu)
 
+        self.view_menu = tk.Menu(self.menubar, tearoff=0)
+        self.view_menu.add_command(label="Flip Board        ", command=self.flip, accelerator="Ctrl+F")
+        self.menubar.add_cascade(label="View", menu=self.view_menu)
+
 
         self.parent.config(menu=self.menubar)
 
         # Draw Chessboard
-        self.canvas = tk.Canvas(self, highlightthickness=0, width=canvas_width, height=canvas_height)
+        self.canvas = tk.Canvas(self, highlightthickness=0, width=self.columns * size, height=self.rows * size)
         self.canvas.grid(columnspan=8, rowspan=8)
 
         # Draw Alternating Colours on Canvas
@@ -99,30 +83,16 @@ class ChessBoard(tk.Frame):
                 self.squares.append(self.canvas.create_rectangle(x1, y1, x2, y2, outline="", fill=colour, tags="square"))
                 colour = self.colour1 if colour == self.colour2 else self.colour2
 
-        # Draw Coordinate System
-        text_colour = self.colour2
-        offset_x = 4
-        offset_y = 8
-
-        for col, rank in enumerate(list(ranks.keys())):
-            x = col * self.size + offset_x
-            y = self.rows * self.size - offset_y
-            text_colour = self.colour1 if text_colour == self.colour2 else self.colour2
-            self.rank_labels.append(self.canvas.create_text(x, y, fill=text_colour, text=rank))
-
-        text_colour = self.colour2
-        for row, file in enumerate(list(files.keys())[::-1]):
-            x = self.columns * self.size - offset_x
-            y = row * self.size + offset_y
-            text_colour = self.colour1 if text_colour == self.colour2 else self.colour2
-            self.file_labels.append(self.canvas.create_text(x, y, fill=text_colour, text=file))
-
+        self.initialise_coords()
 
         self.initialise_pieces()
         # Event Handlers
 
         # Click Square
-        # self.canvas.bind("<Button-1>", self.click)
+        self.canvas.bind("<Button-1>", self.click)
+        self.parent.bind("<Control-f>", self.flip)
+        self.parent.bind("<Control-q>", self.quit)
+
     def process_image(self, path):
         img = Image.open(path).convert("RGBA")
         img = img.resize((64, 64), Image.ANTIALIAS)
@@ -142,13 +112,63 @@ class ChessBoard(tk.Frame):
         self.piece_images["Q"] = self.process_image("images/alpha/wQ.png")
         self.piece_images["R"] = self.process_image("images/alpha/wR.png")
 
+    def swap_coords(self):
+        self.ranks = {k: 7 - v for k, v in self.ranks.items()}
+        self.files = {k: 7- v for k, v in self.files.items()}
+        coord_keys = ["".join(item)[::-1] for item in list(itertools.product(self.files, self.ranks))]
+        coord_vals = list(itertools.product(self.files.values(), self.ranks.values()))
+        self.coords = dict(zip(coord_keys, coord_vals))
+        self.coords_rev = {v: k for k, v in self.coords.items()}
+
+        for i, rank_idx in enumerate(self.rank_labels):
+            idx = abs(self.orientation * 7 - i)
+            self.canvas.itemconfigure(rank_idx, text=self.rank_keys[idx])
+            # self.file_labels[i].setText(self.file_keys[7 - idx])
+
+        for i, file_idx in enumerate(self.file_labels):
+            idx = abs(self.orientation * 7 - i)
+            self.canvas.itemconfigure(file_idx, text=self.file_keys[7 - idx])
+
+    def initialise_coords(self):
+
+        # Initialise Coordinate Mapping for Chess Board
+        values = [abs(self.orientation * 7 - i) for i in range(8)]
+        self.rank_keys = ["a", "b", "c", "d", "e", "f", "g", "h"]
+        self.file_keys = ["1", "2", "3", "4", "5", "6", "7", "8"]
+        self.ranks = {key: value for key, value in zip(rank_keys, values)}
+        self.files = {key: value for key, value in zip(file_keys, values[::-1])}
+
+        # Coordinate Mapping
+        coord_keys = ["".join(item)[::-1] for item in list(itertools.product(self.files, self.ranks))]
+        coord_vals = list(itertools.product(self.files.values(), self.ranks.values()))
+
+        self.coords = dict(zip(coord_keys, coord_vals))
+        self.coords_rev = {v: k for k, v in self.coords.items()}
+
+        text_colour = self.colour2
+        offset_x = 4
+        offset_y = 8
+
+        for col, rank in enumerate(sorted(self.ranks, key=lambda k: self.ranks[k])):
+            x = col * self.size + offset_x
+            y = self.rows * self.size - offset_y
+            text_colour = self.colour1 if text_colour == self.colour2 else self.colour2
+            self.rank_labels.append(self.canvas.create_text(x, y, fill=text_colour, text=rank))
+
+        text_colour = self.colour2
+        for row, file in enumerate(sorted(self.files, key=lambda k: self.files[k])):
+            x = self.columns * self.size - offset_x
+            y = row * self.size + offset_y
+            text_colour = self.colour1 if text_colour == self.colour2 else self.colour2
+            self.file_labels.append(self.canvas.create_text(x, y, fill=text_colour, text=file))
+
     def click(self, event):
         curr_col = int(event.x / self.size)
         curr_row = 7 - int(event.y / self.size)
         print(curr_col)
         print(curr_row)
         for x in self.squares:
-            print(x)
+            # print(x)
             lbl = tk.Label
 
         # self.highlight_square
@@ -161,8 +181,13 @@ class ChessBoard(tk.Frame):
     def save(self):
         print("SAVING")
 
-    def quit(self):
-        print("QUITTING")
+    def quit(self, event=None):
+        self.parent.destroy()
+
+    def flip(self, event=None):
+        self.orientation = not self.orientation
+        self.swap_coords()
+        self.flip_pieces()
     # def highlight_square(self, pos):
     #     piece = self.canvas.
 
@@ -189,12 +214,21 @@ class ChessBoard(tk.Frame):
                 if item.isdigit():
                     col += int(item) - 1
                 else:
-                    self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], row=row, column=col)
+                    if self.orientation == 0:
+                        self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], row=row, column=col)
+                    else:
+                        self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], row= 7 - row, column= 7 - col)
                 col += 1
+
+    def flip_pieces(self):
+        for name in list(self.pieces.keys()):
+            row, col = self.pieces[name]
+            self.place_piece(name, 7 - row, 7 - col)
+
 if __name__ == '__main__':
     root = tk.Tk()
     root.resizable(False, False)
     game = chess.Board()
-    board = ChessBoard(parent=root, game=game)
+    board = ChessBoard(parent=root, game=game, orientation=0)
     board.initialise_pieces()
     root.mainloop()
