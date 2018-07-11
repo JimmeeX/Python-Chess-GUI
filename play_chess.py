@@ -14,6 +14,7 @@ class ChessBoard(tk.Frame):
         self.selected_piece = None
         self.highlighted = None
 
+        self.parent=parent
         self.game=game
         self.orientation = orientation
 
@@ -62,6 +63,21 @@ class ChessBoard(tk.Frame):
 
         canvas_width = self.columns * size
         canvas_height = self.rows * size
+
+        # Initialise GUI
+
+        # Menu
+        self.menubar = tk.Menu(self)
+
+        self.file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.file_menu.add_command(label="New Game          ", command=self.new, accelerator="Ctrl+N")
+        self.file_menu.add_command(label="Load Game", command=self.load, accelerator="Ctrl+L")
+        self.file_menu.add_command(label="Save Game", command=self.save, accelerator="Ctrl+S")
+        self.file_menu.add_command(label="Quit Game", command=self.quit, accelerator="Ctrl+Q")
+        self.menubar.add_cascade(label="File", menu=self.file_menu)
+
+
+        self.parent.config(menu=self.menubar)
 
         # Draw Chessboard
         self.canvas = tk.Canvas(self, highlightthickness=0, width=canvas_width, height=canvas_height)
@@ -136,7 +152,17 @@ class ChessBoard(tk.Frame):
             lbl = tk.Label
 
         # self.highlight_square
+    def new(self):
+        print("NEW")
 
+    def load(self):
+        print("LOADING")
+
+    def save(self):
+        print("SAVING")
+
+    def quit(self):
+        print("QUITTING")
     # def highlight_square(self, pos):
     #     piece = self.canvas.
 
