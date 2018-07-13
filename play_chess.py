@@ -3,17 +3,6 @@ from PIL import Image, ImageTk
 import chess
 import tkinter as tk
 import itertools
-#%%
-g = chess.Board()
-#%%
-x = g.piece_at(chess.E7)
-move = chess.Move.from_uci("g1f3")
-print(g.legal_moves)
-print(move in g.legal_moves)
-# print(g.turn)
-# g.push_san(("e4"))
-# print(g.turn)
-#%%
 
 class ChessBoard(tk.Frame):
     def __init__(self, parent, game, orientation=0, size=64, colour1="#F0D9B5", colour2="#B58863"):
@@ -21,7 +10,6 @@ class ChessBoard(tk.Frame):
         self.grid()
         self.configure(background="black")
 
-        self.selected = None
         self.selected_piece = None
         self.highlighted = []
 
@@ -38,6 +26,7 @@ class ChessBoard(tk.Frame):
         self.colour1 = colour1
         self.colour2 = colour2
         self.pieces = {}
+        self.piece_ids = []
         self.piece_images = {}
         self.piece_count = {
             'b': 0,
@@ -53,6 +42,10 @@ class ChessBoard(tk.Frame):
             'Q': 0,
             'R': 0
         }
+
+        self.squares = []
+        self.move_squares = []
+        self.piece_squares = []
 
         self.initialise_images()
 
@@ -132,10 +125,11 @@ class ChessBoard(tk.Frame):
                 y1 = row * self.size
                 x2 = x1 + self.size
                 y2 = y1 + self.size
-
-                # print(self.coords_rev[(row, col)])
-
+                r1 = 7
+                r2 = 32
                 self.squares.append(self.canvas.create_rectangle(x1, y1, x2, y2, outline="", fill=colour, tags="square"))
+                self.piece_squares.append(self.canvas.create_oval((x1+x2)/2-r2, (y1+y2)/2-r2, (x1+x2)/2+r2, (y1+y2)/2+r2, outline="", fill=colour, tags="outer_circle"))
+                self.move_squares.append(self.canvas.create_oval((x1+x2)/2-r1, (y1+y2)/2-r1, (x1+x2)/2+r1, (y1+y2)/2+r1, outline="", fill=colour, tags="inner_circle"))
                 colour = self.colour1 if colour == self.colour2 else self.colour2
 
     def initialise_coords(self):
@@ -153,7 +147,6 @@ class ChessBoard(tk.Frame):
 
         self.coords = dict(zip(coord_keys, coord_vals))
         self.coords_rev = {v: k for k, v in self.coords.items()}
-        print(self.coords_rev)
         text_colour = self.colour2
         offset_x = 4
         offset_y = 8
@@ -172,32 +165,54 @@ class ChessBoard(tk.Frame):
             self.file_labels.append(self.canvas.create_text(x, y, fill=text_colour, text=file))
 
     def click(self, event):
+        move_made = False
         curr_col = int(event.x / self.size)
         curr_row = int(event.y / self.size)
-        print(self.coords_rev[(curr_row, curr_col)])
-        print(self.square_contains_piece(curr_row, curr_col))
-
         square_id = self.get_square_id(curr_row, curr_col)
         curr_piece, curr_color = self.square_contains_piece(curr_row, curr_col)
 
+        print(self.game.legal_moves)
+
+
+        if (curr_row, curr_col) in self.highlighted[1:]:
+            self.make_move(curr_row, curr_col)
+            move_made = True
         self.remove_highlight()
-        if curr_color == self.game.turn:
-            self.highlight_piece(curr_row, curr_col, square_id)
+        if curr_color == self.game.turn and not move_made:
+            self.highlight_piece(curr_row, curr_col, curr_piece)
+
     def remove_highlight(self):
-        for square in self.highlighted:
-            self.canvas.itemconfigure(square, fill=self.get_square_colour(square))
+        for row, col in self.highlighted:
+            self.highlight_square(row, col, colour=self.get_square_colour(row, col))
         self.highlighted = []
-        self.selected = None
+        self.selected_piece = None
 
-    def highlight_piece(self, row, col, square_id):
+    def highlight_piece(self, row, col, piece):
         """Highlights Piece and its Available Moves"""
-        self.canvas.itemconfigure(square_id, fill="#646F40")
-        self.selected = self.coords_rev[(row, col)]
-        self.highlighted.append(square_id)
-        for square in self.get_possible_squares(row, col):
-            self.canvas.itemconfigure(square, fill="red")
-            self.highlighted.append(square)
+        square_id = self.get_square_id(row, col)
+        self.highlight_square(row, col, colour="#646F40")
+        self.selected_piece = piece
+        self.highlighted.append((row, col))
+        for row_, col_ in self.get_possible_squares(row, col):
+            piece, colour = self.square_contains_piece(row_, col_)
+            # Move Square
+            if colour is None:
+                self.highlight_move_square(row_, col_, colour="#646F40")
+            # Piece Square
+            else:
+                self.highlight_piece_square(row_, col_, colour="#646F40")
+            self.highlighted.append((row_, col_))
 
+    def highlight_square(self, row, col, colour):
+        self.canvas.itemconfigure(self.get_square_id(row, col), fill=colour)
+        self.canvas.itemconfigure(self.get_move_square_id(row, col), fill=colour)
+        self.canvas.itemconfigure(self.get_piece_square_id(row, col), fill=colour)
+
+    def highlight_move_square(self, row, col, colour):
+        self.canvas.itemconfigure(self.get_move_square_id(row, col), fill=colour)
+
+    def highlight_piece_square(self, row, col, colour):
+        self.canvas.itemconfigure(self.get_square_id(row, col), fill=colour)
 
     def new(self):
         print("NEW")
@@ -218,7 +233,7 @@ class ChessBoard(tk.Frame):
 
     def add_piece(self, name, kind, image, row=0, column=0):
         '''Add a piece to the playing board'''
-        self.canvas.create_image(0, 0, image=image, tags=(name, "piece"), anchor="c")
+        self.piece_ids.append(self.canvas.create_image(0, 0, image=image, tags=(name, "piece"), anchor="c"))
         self.piece_count[kind] += 1
         self.place_piece(name, row, column)
 
@@ -231,6 +246,7 @@ class ChessBoard(tk.Frame):
         self.canvas.coords(name, x0, y0)
 
     def initialise_pieces(self):
+        self.clear_pieces()
         raw_fen = self.game.fen()
         start_fen = raw_fen.split()[0].split('/')
         for row in range(8):
@@ -244,6 +260,26 @@ class ChessBoard(tk.Frame):
                     else:
                         self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], row= 7 - row, column= 7 - col)
                 col += 1
+
+    def clear_pieces(self):
+        self.pieces = {}
+        self.piece_count = {
+            'b': 0,
+            'k': 0,
+            'n': 0,
+            'p': 0,
+            'q': 0,
+            'r': 0,
+            'B': 0,
+            'K': 0,
+            'N': 0,
+            'P': 0,
+            'Q': 0,
+            'R': 0
+        }
+        for i in range(len(self.piece_ids)):
+            idx = self.piece_ids.pop()
+            self.canvas.delete(idx)
 
     def flip_pieces(self):
         for name in list(self.pieces.keys()):
@@ -262,11 +298,17 @@ class ChessBoard(tk.Frame):
         return piece[0].isupper()
 
     def get_square_id(self, row, col):
-        return row * 8 + (col + 1)
+        return self.squares[row * 8 + col]
 
-    def get_square_colour(self, id):
+    def get_move_square_id(self, row, col):
+        return self.move_squares[row * 8 + col]
+
+    def get_piece_square_id(self, row, col):
+        return self.piece_squares[row * 8 + col]
+
+    def get_square_colour(self, row, col):
         colours = [self.colour1, self.colour2]
-        return colours[(id + 1 + (((id - 1) // 8) % 2)) % 2]
+        return colours[(row + col % 2) % 2]
 
     def get_possible_squares(self, row, col):
         coord_from = self.coords_rev[(row, col)]
@@ -276,9 +318,14 @@ class ChessBoard(tk.Frame):
             move = chess.Move.from_uci(coord_from + coord_to)
             if move in valid_moves:
                 row, col = self.coords[coord_to]
-                squares.append(self.get_square_id(row, col))
+                squares.append((row, col))
         return squares
 
+    def make_move(self, row_to, col_to):
+        selected = self.coords_rev[self.highlighted[0]]
+        move = chess.Move.from_uci(selected + self.coords_rev[(row_to, col_to)])
+        self.game.push(move)
+        self.initialise_pieces()
 
 if __name__ == '__main__':
     root = tk.Tk()
