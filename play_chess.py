@@ -13,7 +13,6 @@ class HighlightTags(IntFlag):
     PROMOTION = 16 # EVERYTHING IS DIFFERENT LOL
     SELECT_CHECK = SELECT | CHECK
 #%%
-
 class ChessBoard(tk.Frame):
     def __init__(self, parent, game, orientation=0, size=64, colour1="#F0D9B5", colour2="#B58863"):
         super().__init__(parent)
@@ -38,7 +37,7 @@ class ChessBoard(tk.Frame):
         self.colour2 = colour2
 
         self.pieces = {}
-        self.piece_ids = []
+        self.piece_ids = {}
         self.piece_images = {}
         self.piece_count = {
             'b': 0,
@@ -55,25 +54,33 @@ class ChessBoard(tk.Frame):
             'R': 0
         }
 
+        self.promotion_options = []
+        self.promotion_pieces = {}
+        self.promotion_piece_ids = {}
+
         # Square Highlighting
         self.square_ids = []
         self.outer_circle_ids = []
         self.inner_circle_ids = []
-
-        self.promotion_options = []
-        self.promotion_pieces = {}
-        self.promotion_piece_ids = []
-
         self.check_square = None
-
         self.highlight_map = {}
+
+        self.move_history = []
+
+        # Drag Drop
+        self.move_flag = False
+        self.move_piece = None
+        self.initial_x = None
+        self.initial_y = None
 
         self.initialise_images()
         self.initialise_coords()
         self.initialise_menu()
         self.initialise_chessboard()
+        self.initialise_side_panel()
         self.initialise_rank_files()
         self.initialise_pieces()
+        self.initialise_drag_drop()
 
         # Click Square
         self.canvas.bind("<Button-1>", self.click)
@@ -153,6 +160,16 @@ class ChessBoard(tk.Frame):
                 self.inner_circle_ids.append(self.canvas.create_oval((x1+x2)/2-r1, (y1+y2)/2-r1, (x1+x2)/2+r1, (y1+y2)/2+r1, outline="", fill=colour, tags="inner_circle"))
                 colour = self.colour1 if colour == self.colour2 else self.colour2
 
+    def initialise_side_panel(self):
+        #TODO: MOVE HISTORY
+        #TODO: PIECE CAPTURES
+        #TODO: LEFT+RIGHT
+        self.side_panel = tk.Frame(self, width=self.columns * self.size / 2, height= self.rows * self.size, bg="#262626")
+        self.side_panel.grid(column=8, row=0, columnspan=4, rowspan=8)
+
+        self.result_label = tk.Label(self, text="Game over: Insufficient Material 1-0", font=("Impact", 12), bg="#262626", fg="#888888", anchor="c")
+        self.result_label.grid(row=0, column=8, columnspan=4)
+
     def initialise_rank_files(self):
         text_colour = self.colour2
         offset_x = 4
@@ -171,6 +188,17 @@ class ChessBoard(tk.Frame):
             text_colour = self.colour1 if text_colour == self.colour2 else self.colour2
             self.file_labels.append(self.canvas.create_text(x, y, fill=text_colour, text=file))
 
+    def initialise_drag_drop(self):
+        for _, piece in self.piece_ids.items():
+            self.canvas.tag_bind(piece, "<ButtonPress-1>", self.drag_select)
+            self.canvas.tag_bind(piece, "<Button1-Motion>", self.drag_move)
+            self.canvas.tag_bind(piece, "<ButtonRelease-1>", self.drag_release)
+            # self.canvas.config(piece, cursor="hand1")
+
+        # widget.bind("<ButtonPress-1>", self.on_start)
+        # widget.bind("<B1-Motion>", self.on_drag)
+        # widget.bind("<ButtonRelease-1>", self.on_drop)
+        # widget.configure(cursor="hand1")
     def click(self, event):
         move_made = False
         curr_col = int(event.x / self.size)
@@ -210,6 +238,9 @@ class ChessBoard(tk.Frame):
         self.remove_highlight()
         self.highlight_squares()
         self.canvas.bind("<Button-1>", self.click)
+
+    def null(self, event):
+        pass
 
     def remove_highlight(self):
         if self.selected is not None:
@@ -337,7 +368,7 @@ class ChessBoard(tk.Frame):
 
     def add_piece(self, name, kind, image, coord):
         '''Add a piece to the playing board'''
-        self.piece_ids.append(self.canvas.create_image(0, 0, image=image, tags=(name, "piece"), anchor="c"))
+        self.piece_ids[coord] = self.canvas.create_image(0, 0, image=image, tags=(name, "piece"), anchor="c")
         self.piece_count[kind] += 1
         self.place_piece(name, coord)
 
@@ -386,9 +417,10 @@ class ChessBoard(tk.Frame):
             'Q': 0,
             'R': 0
         }
-        for i in range(len(self.piece_ids)):
-            idx = self.piece_ids.pop()
+        idx_list = list(self.piece_ids.values())
+        for idx in idx_list:
             self.canvas.delete(idx)
+        self.piece_ids = {}
 
     def square_contains_piece(self, coord):
         piece_coords = {k: v for v, k in self.pieces.items()}
@@ -454,9 +486,13 @@ class ChessBoard(tk.Frame):
             # self.highlight_square(coord, colour=self.get_square_colour(coord))
         self.promotion_options = []
         self.promotion_pieces = {}
-        for i in range(len(self.promotion_piece_ids)):
-            idx = self.promotion_piece_ids.pop()
+        idx_list = list(self.promotion_piece_ids.values())
+        for idx in idx_list:
             self.canvas.delete(idx)
+        self.piece_ids = {}
+        # for i in range(len(self.promotion_piece_ids)):
+        #     idx = self.promotion_piece_ids.pop()
+        #     self.canvas.delete(idx)
 
     def highlight_promotion_square(self, coord):
         self.canvas.itemconfigure(self.get_square_id(coord), fill="#45453D")
@@ -465,12 +501,13 @@ class ChessBoard(tk.Frame):
 
     def draw_promotion_piece(self, coord, piece):
         name = "=" + piece
-        self.promotion_piece_ids.append((self.canvas.create_image(0, 0, image=self.piece_images[piece], tags=(name, "piece"), anchor="c")))
+        self.promotion_piece_ids[coord] = self.canvas.create_image(0, 0, image=self.piece_images[piece], tags=(name, "piece"), anchor="c")
         self.place_piece(name, coord, promotion=True)
 
     def make_move(self, coord_to, promotion=""):
         move = chess.Move.from_uci(self.selected + coord_to + promotion)
         self.game.push(move)
+        self.move_history.append(move)
         self.initialise_pieces()
 
     def assess_position(self):
@@ -482,7 +519,51 @@ class ChessBoard(tk.Frame):
             self.highlight_map[self.check_square] -= HighlightTags.CHECK.value
             self.check_square = None
 
+        if self.game.is_game_over(claim_draw=True):
+            string = "Game Over: "
+            if self.game.is_checkmate():
+                string += "Checkmate "
+            elif self.game.is_stalemate():
+                string += "Stalemate "
+            elif self.is_insufficient_material():
+                string += "Insufficient Material "
+            elif self.is_seventyfive_moves():
+                string += "75 Moves "
+            elif self.is_fivefold_repetition():
+                string += "5-fold Repetition "
+            string += self.game.result()
+            self.result_label.config(text=string)
+            self.canvas.bind("<Button-1>", self.click)
 
+    def drag_select(self, event):
+        print(event)
+        print("SELECT")
+
+    def drag_move(self, event):
+        if self.move_flag:
+            print(event.x, event.y)
+            new_xpos, new_ypos = event.x, event.y
+
+            self.canvas.coords(self.move_piece, event.x, event.y)
+            # self.canvas.move(self.move_piece, self.initial_x-new_xpos ,self.initial_y-new_ypos)
+
+            # print("X: "+str(self.initial_x-new_xpos))
+            # print("Y: "+str(self.initial_y-new_ypos))
+        else:
+            self.move_flag = True
+            curr_col = int(event.x / self.size)
+            curr_row = int(event.y / self.size)
+            curr_coord = self.coords_rev[(curr_row, curr_col)]
+            self.move_piece = self.piece_ids[curr_coord]
+            self.initial_x = event.x
+            self.initial_y = event.y
+
+    def drag_release(self, event):
+        self.move_flag = False
+        self.move_piece = None
+        self.initial_x = None
+        self.initial_y = None
+        print("RELEASE")
 
 if __name__ == '__main__':
     root = tk.Tk()
