@@ -1,8 +1,18 @@
 #%%
 from PIL import Image, ImageTk
+from enum import IntFlag
 import chess
 import tkinter as tk
 import itertools
+#%%
+class HighlightTags(IntFlag):
+    SELECT = 1 # WHOLE SQUARE
+    MOVE = 2 # INNER CIRCLE
+    PIECE = 4 # JUST THE OUTER
+    CHECK = 8 # OUTER CIRCLE
+    PROMOTION = 16 # EVERYTHING IS DIFFERENT LOL
+    SELECT_CHECK = SELECT | CHECK
+#%%
 
 class ChessBoard(tk.Frame):
     def __init__(self, parent, game, orientation=0, size=64, colour1="#F0D9B5", colour2="#B58863"):
@@ -11,7 +21,8 @@ class ChessBoard(tk.Frame):
         self.configure(background="black")
 
         self.selected_piece = None
-        self.highlighted = []
+        self.selected = None
+        self.possible_moves = []
 
         self.parent=parent
         self.game=game
@@ -25,6 +36,7 @@ class ChessBoard(tk.Frame):
         self.size = size
         self.colour1 = colour1
         self.colour2 = colour2
+
         self.pieces = {}
         self.piece_ids = []
         self.piece_images = {}
@@ -43,35 +55,25 @@ class ChessBoard(tk.Frame):
             'R': 0
         }
 
-        self.squares = []
-        self.move_squares = []
-        self.piece_squares = []
-        self.promotion_highlighted = []
+        # Square Highlighting
+        self.square_ids = []
+        self.outer_circle_ids = []
+        self.inner_circle_ids = []
+
+        self.promotion_options = []
         self.promotion_pieces = {}
         self.promotion_piece_ids = []
 
+        self.check_square = None
+
+        self.highlight_map = {}
+
         self.initialise_images()
-
-        # Menu
-        self.menubar = tk.Menu(self)
-
-        self.file_menu = tk.Menu(self.menubar, tearoff=0)
-        self.file_menu.add_command(label="New Game          ", command=self.new, accelerator="Ctrl+N")
-        self.file_menu.add_command(label="Load Game", command=self.load, accelerator="Ctrl+L")
-        self.file_menu.add_command(label="Save Game", command=self.save, accelerator="Ctrl+S")
-        self.file_menu.add_command(label="Quit Game", command=self.quit, accelerator="Ctrl+Q")
-        self.menubar.add_cascade(label="File", menu=self.file_menu)
-
-        self.view_menu = tk.Menu(self.menubar, tearoff=0)
-        self.view_menu.add_command(label="Flip Board        ", command=self.flip, accelerator="Ctrl+F")
-        self.menubar.add_cascade(label="View", menu=self.view_menu)
-
-        self.parent.config(menu=self.menubar)
-
-        self.initialise_chessboard()
         self.initialise_coords()
+        self.initialise_menu()
+        self.initialise_chessboard()
+        self.initialise_rank_files()
         self.initialise_pieces()
-        # Event Handlers
 
         # Click Square
         self.canvas.bind("<Button-1>", self.click)
@@ -97,49 +99,7 @@ class ChessBoard(tk.Frame):
         self.piece_images["Q"] = self.process_image("images/alpha/wQ.png")
         self.piece_images["R"] = self.process_image("images/alpha/wR.png")
 
-    def swap_coords(self):
-        self.ranks = {k: 7 - v for k, v in self.ranks.items()}
-        self.files = {k: 7- v for k, v in self.files.items()}
-        coord_keys = ["".join(item)[::-1] for item in list(itertools.product(self.files, self.ranks))]
-        coord_vals = list(itertools.product(self.files.values(), self.ranks.values()))
-        self.coords = dict(zip(coord_keys, coord_vals))
-        self.coords_rev = {v: k for k, v in self.coords.items()}
-
-        for i, rank_idx in enumerate(self.rank_labels):
-            idx = abs(self.orientation * 7 - i)
-            self.canvas.itemconfigure(rank_idx, text=self.rank_keys[idx])
-
-        for i, file_idx in enumerate(self.file_labels):
-            idx = abs(self.orientation * 7 - i)
-            self.canvas.itemconfigure(file_idx, text=self.file_keys[7 - idx])
-
-        self.remove_highlight()
-        self.hide_promotion()
-
-    def initialise_chessboard(self):
-        # Draw Chessboard
-        self.canvas = tk.Canvas(self, highlightthickness=0, width=self.columns * self.size, height=self.rows * self.size)
-        self.canvas.grid(columnspan=8, rowspan=8)
-
-        # Draw Alternating Colours on Canvas
-        colour = self.colour2
-        self.squares = []
-        for row in range(self.rows):
-            colour = self.colour1 if colour == self.colour2 else self.colour2
-            for col in range(self.columns):
-                x1 = col * self.size
-                y1 = row * self.size
-                x2 = x1 + self.size
-                y2 = y1 + self.size
-                r1 = 7
-                r2 = 32
-                self.squares.append(self.canvas.create_rectangle(x1, y1, x2, y2, outline="", fill=colour, tags="square"))
-                self.piece_squares.append(self.canvas.create_oval((x1+x2)/2-r2, (y1+y2)/2-r2, (x1+x2)/2+r2, (y1+y2)/2+r2, outline="", fill=colour, tags="outer_circle"))
-                self.move_squares.append(self.canvas.create_oval((x1+x2)/2-r1, (y1+y2)/2-r1, (x1+x2)/2+r1, (y1+y2)/2+r1, outline="", fill=colour, tags="inner_circle"))
-                colour = self.colour1 if colour == self.colour2 else self.colour2
-
     def initialise_coords(self):
-
         # Initialise Coordinate Mapping for Chess Board
         values = [abs(self.orientation * 7 - i) for i in range(8)]
         self.rank_keys = ["a", "b", "c", "d", "e", "f", "g", "h"]
@@ -153,6 +113,47 @@ class ChessBoard(tk.Frame):
 
         self.coords = dict(zip(coord_keys, coord_vals))
         self.coords_rev = {v: k for k, v in self.coords.items()}
+
+        self.highlight_map = dict(zip(coord_keys, [0] * 64))
+
+    def initialise_menu(self):
+        self.menubar = tk.Menu(self)
+
+        self.file_menu = tk.Menu(self.menubar, tearoff=0)
+        self.file_menu.add_command(label="New Game          ", command=self.new, accelerator="Ctrl+N")
+        self.file_menu.add_command(label="Load Game", command=self.load, accelerator="Ctrl+L")
+        self.file_menu.add_command(label="Save Game", command=self.save, accelerator="Ctrl+S")
+        self.file_menu.add_command(label="Quit Game", command=self.quit, accelerator="Ctrl+Q")
+        self.menubar.add_cascade(label="File", menu=self.file_menu)
+
+        self.view_menu = tk.Menu(self.menubar, tearoff=0)
+        self.view_menu.add_command(label="Flip Board        ", command=self.flip, accelerator="Ctrl+F")
+        self.menubar.add_cascade(label="View", menu=self.view_menu)
+
+        self.parent.config(menu=self.menubar)
+
+    def initialise_chessboard(self):
+        # Draw Chessboard
+        self.canvas = tk.Canvas(self, highlightthickness=0, width=self.columns * self.size, height=self.rows * self.size)
+        self.canvas.grid(columnspan=8, rowspan=8)
+
+        # Draw Alternating Colours on Canvas
+        colour = self.colour2
+        for row in range(self.rows):
+            colour = self.colour1 if colour == self.colour2 else self.colour2
+            for col in range(self.columns):
+                x1 = col * self.size
+                y1 = row * self.size
+                x2 = x1 + self.size
+                y2 = y1 + self.size
+                r1 = 7
+                r2 = 32
+                self.square_ids.append(self.canvas.create_rectangle(x1, y1, x2, y2, outline="", fill=colour, tags="square"))
+                self.outer_circle_ids.append(self.canvas.create_oval((x1+x2)/2-r2, (y1+y2)/2-r2, (x1+x2)/2+r2, (y1+y2)/2+r2, outline="", fill=colour, tags="outer_circle"))
+                self.inner_circle_ids.append(self.canvas.create_oval((x1+x2)/2-r1, (y1+y2)/2-r1, (x1+x2)/2+r1, (y1+y2)/2+r1, outline="", fill=colour, tags="inner_circle"))
+                colour = self.colour1 if colour == self.colour2 else self.colour2
+
+    def initialise_rank_files(self):
         text_colour = self.colour2
         offset_x = 4
         offset_y = 8
@@ -174,68 +175,114 @@ class ChessBoard(tk.Frame):
         move_made = False
         curr_col = int(event.x / self.size)
         curr_row = int(event.y / self.size)
-        square_id = self.get_square_id(curr_row, curr_col)
-        curr_piece, curr_color = self.square_contains_piece(curr_row, curr_col)
+        curr_coord = self.coords_rev[(curr_row, curr_col)]
+        square_id = self.get_square_id(curr_coord)
+        curr_piece, curr_colour = self.square_contains_piece(curr_coord)
 
-        if (curr_row, curr_col) in self.highlighted[1:]:
-            from_row, from_col = self.highlighted[0]
-            promotion = ""
-            if self.is_promotion(from_row, from_col, self.selected_piece):
-                self.show_promotion(curr_row, curr_col)
+        if curr_coord in self.possible_moves:
+            from_coord = self.selected
+            if self.is_promotion(from_coord, self.selected_piece):
+                self.show_promotion(curr_coord)
+                self.highlight_squares()
                 self.canvas.bind("<Button-1>", self.click_promotion)
                 return
-            self.make_move(curr_row, curr_col, promotion)
+            self.make_move(curr_coord)
+            self.assess_position()
             move_made = True
         self.remove_highlight()
-        if curr_color == self.game.turn and not move_made:
-            self.highlight_piece(curr_row, curr_col, curr_piece)
+        if curr_colour == self.game.turn and not move_made:
+            self.set_highlight(curr_coord, curr_piece)
+        self.highlight_squares()
 
     def click_promotion(self, event):
         curr_col = int(event.x / self.size)
         curr_row = int(event.y / self.size)
+        curr_coord = self.coords_rev[(curr_row, curr_col)]
         promotion_pieces_rev = {v: k for k, v in self.promotion_pieces.items()}
-        if (curr_row, curr_col) in self.promotion_highlighted:
-            promotion = promotion_pieces_rev[(curr_row, curr_col)][1].lower()
-            row, col = self.promotion_highlighted[0]
-            self.make_move(row, col, promotion)
+        if curr_coord in self.promotion_options:
+            promotion = promotion_pieces_rev[curr_coord][1].lower()
+            to_coord = self.promotion_options[0]
+            self.make_move(to_coord, promotion)
+            self.assess_position()
         else:
             promotion = ""
         self.hide_promotion()
         self.remove_highlight()
+        self.highlight_squares()
         self.canvas.bind("<Button-1>", self.click)
 
     def remove_highlight(self):
-        for row, col in self.highlighted:
-            self.highlight_square(row, col, colour=self.get_square_colour(row, col))
-        self.highlighted = []
+        if self.selected is not None:
+            if HighlightTags.CHECK in HighlightTags(self.highlight_map[self.selected]) and self.game.is_check():
+                self.highlight_map[self.selected] -= HighlightTags.SELECT.value
+            else:
+                self.highlight_map[self.selected] = 0
+            for coord in self.possible_moves:
+                self.highlight_map[coord] = 0
+        self.selected = None
+        self.possible_moves = []
         self.selected_piece = None
 
-    def highlight_piece(self, row, col, piece):
+    def set_highlight(self, coord, piece):
         """Highlights Piece and its Available Moves"""
-        square_id = self.get_square_id(row, col)
-        self.highlight_square(row, col, colour="#646F40")
+        self.selected = coord
+        self.highlight_map[coord] += HighlightTags.SELECT.value
         self.selected_piece = piece
-        self.highlighted.append((row, col))
-        for row_, col_ in self.get_possible_squares(row, col):
-            piece, colour = self.square_contains_piece(row_, col_)
-            # Move Square
+        for possible_coords in self.get_possible_squares(coord):
+            piece, colour = self.square_contains_piece(possible_coords)
             if colour is None:
-                self.highlight_move_square(row_, col_, colour="#646F40")
-            # Piece Square
+                self.highlight_map[possible_coords] += HighlightTags.MOVE.value
             else:
-                self.highlight_piece_square(row_, col_, colour="#646F40")
-            self.highlighted.append((row_, col_))
+                self.highlight_map[possible_coords] += HighlightTags.PIECE.value
+            self.possible_moves.append(possible_coords)
 
-    def highlight_square(self, row, col, colour):
-        self.canvas.itemconfigure(self.get_square_id(row, col), fill=colour)
-        self.canvas.itemconfigure(self.get_move_square_id(row, col), fill=colour)
-        self.canvas.itemconfigure(self.get_piece_square_id(row, col), fill=colour)
+    def highlight_squares(self):
+        highlight_dict = {
+            0: self.highlight_none,
+            HighlightTags.SELECT.value: self.highlight_select,
+            HighlightTags.MOVE.value: self.highlight_move,
+            HighlightTags.PIECE.value: self.highlight_piece,
+            HighlightTags.CHECK.value: self.highlight_check,
+            HighlightTags.PROMOTION.value: self.highlight_promotion,
+            HighlightTags.SELECT_CHECK.value: self.highlight_select_check
+        }
+        for coord, tag in self.highlight_map.items():
+            highlight_dict[tag](coord)
 
-    def highlight_move_square(self, row, col, colour):
-        self.canvas.itemconfigure(self.get_move_square_id(row, col), fill=colour)
+    def highlight_none(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill=self.get_square_colour(coord))
+        self.canvas.itemconfigure(self.get_outer_circle_id(coord), fill=self.get_square_colour(coord))
+        self.canvas.itemconfigure(self.get_inner_circle_id(coord), fill=self.get_square_colour(coord))
 
-    def highlight_piece_square(self, row, col, colour):
-        self.canvas.itemconfigure(self.get_square_id(row, col), fill=colour)
+    def highlight_select(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill="#646F40")
+        self.canvas.itemconfigure(self.get_outer_circle_id(coord), fill="#646F40")
+        self.canvas.itemconfigure(self.get_inner_circle_id(coord), fill="#646F40")
+
+    def highlight_move(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill=self.get_square_colour(coord))
+        self.canvas.itemconfigure(self.get_outer_circle_id(coord), fill=self.get_square_colour(coord))
+        self.canvas.itemconfigure(self.get_inner_circle_id(coord), fill="#646F40")
+
+    def highlight_piece(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill="#646F40")
+        self.canvas.itemconfigure(self.get_outer_circle_id(coord), fill=self.get_square_colour(coord))
+        self.canvas.itemconfigure(self.get_inner_circle_id(coord), fill=self.get_square_colour(coord))
+
+    def highlight_check(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill=self.get_square_colour(coord))
+        self.canvas.itemconfigure(self.get_outer_circle_id(coord), fill="#D33527")
+        self.canvas.itemconfigure(self.get_inner_circle_id(coord), fill="#D33527")
+
+    def highlight_promotion(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill="#45453D")
+        self.canvas.itemconfigure(self.get_outer_circle_id(coord), fill="#989898")
+        self.canvas.itemconfigure(self.get_inner_circle_id(coord), fill="#989898")
+
+    def highlight_select_check(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill="#646F40")
+        self.canvas.itemconfigure(self.get_outer_circle_id(coord), fill="#D33527")
+        self.canvas.itemconfigure(self.get_inner_circle_id(coord), fill="#D33527")
 
     def new(self):
         print("NEW")
@@ -253,21 +300,55 @@ class ChessBoard(tk.Frame):
         self.orientation = not self.orientation
         self.swap_coords()
         self.flip_pieces()
+        self.highlight_squares()
         self.canvas.bind("<Button-1>", self.click)
 
-    def add_piece(self, name, kind, image, row=0, column=0):
+    def swap_coords(self):
+        self.ranks = {k: 7 - v for k, v in self.ranks.items()}
+        self.files = {k: 7- v for k, v in self.files.items()}
+        coord_keys = ["".join(item)[::-1] for item in list(itertools.product(self.files, self.ranks))]
+        coord_vals = list(itertools.product(self.files.values(), self.ranks.values()))
+        self.coords = dict(zip(coord_keys, coord_vals))
+        self.coords_rev = {v: k for k, v in self.coords.items()}
+
+        for i, rank_idx in enumerate(self.rank_labels):
+            idx = abs(self.orientation * 7 - i)
+            self.canvas.itemconfigure(rank_idx, text=self.rank_keys[idx])
+
+        for i, file_idx in enumerate(self.file_labels):
+            idx = abs(self.orientation * 7 - i)
+            self.canvas.itemconfigure(file_idx, text=self.file_keys[7 - idx])
+
+        # for i, coord in enumerate(self.promotion_options):
+        #     row, col = self.coords[coord]
+        #     self.promotion_options[i] = self.coords_rev[(7 - row, 7 - col)]
+
+        self.remove_highlight()
+        self.hide_promotion()
+
+    def flip_pieces(self):
+        for name in list(self.pieces.keys()):
+            row, col = self.coords[self.pieces[name]]
+            self.place_piece(name, self.coords_rev[(row, col)])
+
+        for name in list(self.promotion_pieces.keys()):
+            row, col = self.coords[self.promotion_pieces[name]]
+            self.place_piece(name, self.coords_rev[(row, col)], promotion=True)
+
+    def add_piece(self, name, kind, image, coord):
         '''Add a piece to the playing board'''
         self.piece_ids.append(self.canvas.create_image(0, 0, image=image, tags=(name, "piece"), anchor="c"))
         self.piece_count[kind] += 1
-        self.place_piece(name, row, column)
+        self.place_piece(name, coord)
 
-    def place_piece(self, name, row, column, promotion=False):
+    def place_piece(self, name, coord, promotion=False):
         '''Place a piece at the given row/column'''
         if promotion:
-            self.promotion_pieces[name] = (row, column)
+            self.promotion_pieces[name] = coord
         else:
-            self.pieces[name] = (row, column)
-        x0 = (column * self.size) + int(self.size/2)
+            self.pieces[name] = coord
+        row, col = self.coords[coord]
+        x0 = (col * self.size) + int(self.size/2)
         y0 = (row * self.size) + int(self.size/2)
         self.canvas.coords(name, x0, y0)
 
@@ -281,10 +362,12 @@ class ChessBoard(tk.Frame):
                 if item.isdigit():
                     col += int(item) - 1
                 else:
+                    coord = self.coords_rev[(row, col)]
+                    coord_flip = self.coords_rev[(7 - row, 7 - col)]
                     if self.orientation == 0:
-                        self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], row=row, column=col)
+                        self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], coord=coord)
                     else:
-                        self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], row= 7 - row, column= 7 - col)
+                        self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], coord=coord_flip)
                 col += 1
 
     def clear_pieces(self):
@@ -307,18 +390,10 @@ class ChessBoard(tk.Frame):
             idx = self.piece_ids.pop()
             self.canvas.delete(idx)
 
-    def flip_pieces(self):
-        for name in list(self.pieces.keys()):
-            row, col = self.pieces[name]
-            self.place_piece(name, 7 - row, 7 - col)
-
-        for name in list(self.promotion_pieces.keys()):
-            row, col = self.promotion_pieces[name]
-            self.place_piece(name, 7 - row, 7 - col, promotion=True)
-    def square_contains_piece(self, row, col):
+    def square_contains_piece(self, coord):
         piece_coords = {k: v for v, k in self.pieces.items()}
-        if (row, col) in piece_coords:
-            piece = piece_coords[(row, col)]
+        if coord in piece_coords:
+            piece = piece_coords[coord]
             return (piece, self.piece_colour(piece))
         else:
             return (None, None)
@@ -326,79 +401,92 @@ class ChessBoard(tk.Frame):
     def piece_colour(self, piece):
         return piece[0].isupper()
 
-    def get_square_id(self, row, col):
-        return self.squares[row * 8 + col]
+    def get_square_id(self, coord):
+        row, col = self.coords[coord]
+        return self.square_ids[row * 8 + col]
 
-    def get_move_square_id(self, row, col):
-        return self.move_squares[row * 8 + col]
+    def get_inner_circle_id(self, coord):
+        row, col = self.coords[coord]
+        return self.inner_circle_ids[row * 8 + col]
 
-    def get_piece_square_id(self, row, col):
-        return self.piece_squares[row * 8 + col]
+    def get_outer_circle_id(self, coord):
+        row, col = self.coords[coord]
+        return self.outer_circle_ids[row * 8 + col]
 
-    def get_square_colour(self, row, col):
+    def get_square_colour(self, coord):
+        row, col = self.coords[coord]
         colours = [self.colour1, self.colour2]
         return colours[(row + col % 2) % 2]
 
-    def get_possible_squares(self, row, col):
-        coord_from = self.coords_rev[(row, col)]
+    def get_possible_squares(self, coord_from):
         squares = []
         valid_moves = list(self.game.legal_moves)
         for coord_to in list(self.coords.keys()):
             move = chess.Move.from_uci(coord_from + coord_to)
             move_promotion = chess.Move.from_uci(coord_from + coord_to + "q")
             if move in valid_moves or move_promotion in valid_moves:
-                row, col = self.coords[coord_to]
-                squares.append((row, col))
+                squares.append(coord_to)
         return squares
 
-    def is_promotion(self, row, col, piece):
-        coord = self.coords_rev[(row, col)]
+    def is_promotion(self, coord, piece):
         if piece[0] == "P" and coord[1] == "7":
             return True
         elif piece[0] == "p" and coord[1] == "2":
             return True
         return False
 
-    def show_promotion(self, row, col):
+    def show_promotion(self, coord):
+        row, col = self.coords[coord]
         pieces = [["q", "n", "r", "b"], ["Q", "N", "R", "B"]]
         for i in range(4):
             if row == 0:
-                self.draw_promotion_piece(i, col, pieces[self.game.turn][i])
-                self.highlight_promotion_square(i, col)
-                self.promotion_highlighted.append((i, col))
+                self.draw_promotion_piece(self.coords_rev[i, col], pieces[self.game.turn][i])
+                self.highlight_map[self.coords_rev[i, col]] = HighlightTags.PROMOTION.value
+                self.promotion_options.append(self.coords_rev[i, col])
             else:
-                self.draw_promotion_piece(7 - i, col, pieces[self.game.turn][i])
-                self.highlight_promotion_square(7 - i, col)
-                self.promotion_highlighted.append((7 - i, col))
+                self.draw_promotion_piece(self.coords_rev[7 - i, col], pieces[self.game.turn][i])
+                self.highlight_map[self.coords_rev[7 - i, col]] = HighlightTags.PROMOTION.value
+                self.promotion_options.append(self.coords_rev[7 - i, col])
 
     def hide_promotion(self):
-        for row, col in self.promotion_highlighted:
-            self.highlight_square(row, col, colour=self.get_square_colour(row, col))
-        self.promotion_highlighted = []
+        for coord in self.promotion_options:
+            self.highlight_map[coord] = 0
+            # self.highlight_square(coord, colour=self.get_square_colour(coord))
+        self.promotion_options = []
         self.promotion_pieces = {}
         for i in range(len(self.promotion_piece_ids)):
             idx = self.promotion_piece_ids.pop()
             self.canvas.delete(idx)
 
-    def highlight_promotion_square(self, row, col):
-        self.canvas.itemconfigure(self.get_square_id(row, col), fill="#45453D")
-        self.canvas.itemconfigure(self.get_move_square_id(row, col), fill="#989898")
-        self.canvas.itemconfigure(self.get_piece_square_id(row, col), fill="#989898")
+    def highlight_promotion_square(self, coord):
+        self.canvas.itemconfigure(self.get_square_id(coord), fill="#45453D")
+        self.canvas.itemconfigure(self.get_move_square_id(coord), fill="#989898")
+        self.canvas.itemconfigure(self.get_piece_square_id(coord), fill="#989898")
 
-    def draw_promotion_piece(self, row, col, piece):
+    def draw_promotion_piece(self, coord, piece):
         name = "=" + piece
         self.promotion_piece_ids.append((self.canvas.create_image(0, 0, image=self.piece_images[piece], tags=(name, "piece"), anchor="c")))
-        self.place_piece(name, row, col, promotion=True)
+        self.place_piece(name, coord, promotion=True)
 
-    def make_move(self, row_to, col_to, promotion):
-        selected = self.coords_rev[self.highlighted[0]]
-        move = chess.Move.from_uci(selected + self.coords_rev[(row_to, col_to)] + promotion)
+    def make_move(self, coord_to, promotion=""):
+        move = chess.Move.from_uci(self.selected + coord_to + promotion)
         self.game.push(move)
         self.initialise_pieces()
+
+    def assess_position(self):
+        if self.game.is_check():
+            king_coord = list(self.coords.keys())[self.game.king(self.game.turn)]
+            self.highlight_map[king_coord] += HighlightTags.CHECK.value
+            self.check_square = king_coord
+        elif self.check_square is not None:
+            self.highlight_map[self.check_square] -= HighlightTags.CHECK.value
+            self.check_square = None
+
+
 
 if __name__ == '__main__':
     root = tk.Tk()
     root.resizable(False, False)
-    game = chess.Board()
+    game = chess.Board(fen="r1bqkb1r/pPp1p3/8/3pPQp1/P1nP1P2/2N5/2P3Pp/R1B1K3 w Qkq - 0 16")
     board = ChessBoard(parent=root, game=game, orientation=0)
     root.mainloop()
