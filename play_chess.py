@@ -70,8 +70,9 @@ class ChessBoard(tk.Frame):
         # Drag Drop
         self.move_flag = False
         self.move_piece = None
-        self.initial_x = None
-        self.initial_y = None
+        self.move_piece_name = None
+        self.drop_to_coord = None
+        self.drop_from_coord = None
 
         self.initialise_images()
         self.initialise_coords()
@@ -80,7 +81,6 @@ class ChessBoard(tk.Frame):
         self.initialise_side_panel()
         self.initialise_rank_files()
         self.initialise_pieces()
-        self.initialise_drag_drop()
 
         # Click Square
         self.canvas.bind("<Button-1>", self.click)
@@ -141,7 +141,7 @@ class ChessBoard(tk.Frame):
 
     def initialise_chessboard(self):
         # Draw Chessboard
-        self.canvas = tk.Canvas(self, highlightthickness=0, width=self.columns * self.size, height=self.rows * self.size)
+        self.canvas = tk.Canvas(self, highlightthickness=0, width=self.columns * self.size, height=self.rows * self.size, cursor="hand")
         self.canvas.grid(columnspan=8, rowspan=8)
 
         # Draw Alternating Colours on Canvas
@@ -189,22 +189,18 @@ class ChessBoard(tk.Frame):
             self.file_labels.append(self.canvas.create_text(x, y, fill=text_colour, text=file))
 
     def initialise_drag_drop(self):
-        for _, piece in self.piece_ids.items():
-            self.canvas.tag_bind(piece, "<ButtonPress-1>", self.drag_select)
-            self.canvas.tag_bind(piece, "<Button1-Motion>", self.drag_move)
-            self.canvas.tag_bind(piece, "<ButtonRelease-1>", self.drag_release)
-            # self.canvas.config(piece, cursor="hand1")
+        pieces_rev = {v:k for k, v in self.pieces.items()}
+        for coord, piece in self.piece_ids.items():
+            if pieces_rev[coord][0].isupper() == self.game.turn:
+                self.canvas.tag_bind(piece, "<Button1-Motion>", self.drag_move)
+                self.canvas.tag_bind(piece, "<ButtonRelease-1>", self.drag_release)
+                # self.canvas.configure(piece, cursor="heart")
 
-        # widget.bind("<ButtonPress-1>", self.on_start)
-        # widget.bind("<B1-Motion>", self.on_drag)
-        # widget.bind("<ButtonRelease-1>", self.on_drop)
-        # widget.configure(cursor="hand1")
     def click(self, event):
         move_made = False
         curr_col = int(event.x / self.size)
         curr_row = int(event.y / self.size)
         curr_coord = self.coords_rev[(curr_row, curr_col)]
-        square_id = self.get_square_id(curr_coord)
         curr_piece, curr_colour = self.square_contains_piece(curr_coord)
 
         if curr_coord in self.possible_moves:
@@ -234,6 +230,7 @@ class ChessBoard(tk.Frame):
             self.assess_position()
         else:
             promotion = ""
+            self.place_piece(self.selected_piece, self.selected)
         self.hide_promotion()
         self.remove_highlight()
         self.highlight_squares()
@@ -400,6 +397,7 @@ class ChessBoard(tk.Frame):
                     else:
                         self.add_piece(name=item + str(self.piece_count[item] + 1), kind=item, image=self.piece_images[item], coord=coord_flip)
                 col += 1
+        self.initialise_drag_drop()
 
     def clear_pieces(self):
         self.pieces = {}
@@ -483,16 +481,11 @@ class ChessBoard(tk.Frame):
     def hide_promotion(self):
         for coord in self.promotion_options:
             self.highlight_map[coord] = 0
-            # self.highlight_square(coord, colour=self.get_square_colour(coord))
         self.promotion_options = []
         self.promotion_pieces = {}
         idx_list = list(self.promotion_piece_ids.values())
         for idx in idx_list:
             self.canvas.delete(idx)
-        self.piece_ids = {}
-        # for i in range(len(self.promotion_piece_ids)):
-        #     idx = self.promotion_piece_ids.pop()
-        #     self.canvas.delete(idx)
 
     def highlight_promotion_square(self, coord):
         self.canvas.itemconfigure(self.get_square_id(coord), fill="#45453D")
@@ -525,45 +518,61 @@ class ChessBoard(tk.Frame):
                 string += "Checkmate "
             elif self.game.is_stalemate():
                 string += "Stalemate "
-            elif self.is_insufficient_material():
+            elif self.game.is_insufficient_material():
                 string += "Insufficient Material "
-            elif self.is_seventyfive_moves():
+            elif self.game.is_seventyfive_moves():
                 string += "75 Moves "
-            elif self.is_fivefold_repetition():
+            elif self.game.is_fivefold_repetition():
                 string += "5-fold Repetition "
             string += self.game.result()
             self.result_label.config(text=string)
             self.canvas.bind("<Button-1>", self.click)
 
-    def drag_select(self, event):
-        print(event)
-        print("SELECT")
-
     def drag_move(self, event):
+        curr_col = int(event.x / self.size)
+        curr_row = int(event.y / self.size)
+        curr_coord = self.coords_rev[(curr_row, curr_col)]
         if self.move_flag:
-            print(event.x, event.y)
-            new_xpos, new_ypos = event.x, event.y
-
+            self.pieces[self.move_piece_name] = curr_coord
             self.canvas.coords(self.move_piece, event.x, event.y)
-            # self.canvas.move(self.move_piece, self.initial_x-new_xpos ,self.initial_y-new_ypos)
-
-            # print("X: "+str(self.initial_x-new_xpos))
-            # print("Y: "+str(self.initial_y-new_ypos))
+            self.drop_to_coord = curr_coord
         else:
+            pieces_rev = {v:k for k, v in self.pieces.items()}
             self.move_flag = True
-            curr_col = int(event.x / self.size)
-            curr_row = int(event.y / self.size)
-            curr_coord = self.coords_rev[(curr_row, curr_col)]
             self.move_piece = self.piece_ids[curr_coord]
-            self.initial_x = event.x
-            self.initial_y = event.y
+            self.move_piece_name = pieces_rev[curr_coord]
+            self.drop_to_coord = curr_coord
+            self.drop_from_coord = curr_coord
+            self.canvas.tag_raise(self.move_piece)
 
     def drag_release(self, event):
-        self.move_flag = False
-        self.move_piece = None
-        self.initial_x = None
-        self.initial_y = None
-        print("RELEASE")
+        if self.move_flag:
+            if self.drop_to_coord in self.possible_moves:
+                self.place_piece(self.move_piece_name, self.drop_to_coord)
+                if self.is_promotion(self.drop_from_coord, self.selected_piece):
+                    self.place_piece(self.move_piece_name, self.drop_from_coord)
+                    self.show_promotion(self.drop_to_coord)
+                    self.highlight_squares()
+                    self.canvas.bind("<Button-1>", self.click_promotion)
+
+                    self.move_flag = False
+                    self.move_piece = None
+                    self.move_piece_name = None
+                    self.drop_to_coord = None
+                    self.drop_from_coord = None
+                    return
+                self.make_move(self.drop_to_coord)
+                self.assess_position()
+            else:
+                self.place_piece(self.move_piece_name, self.drop_from_coord)
+            self.remove_highlight()
+            self.highlight_squares()
+
+            self.move_flag = False
+            self.move_piece = None
+            self.move_piece_name = None
+            self.drop_to_coord = None
+            self.drop_from_coord = None
 
 if __name__ == '__main__':
     root = tk.Tk()
